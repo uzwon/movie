@@ -1,54 +1,316 @@
 import streamlit as st
 from openai import OpenAI
 
-# 페이지 기본 설정 (이 파일만의 설정 — main.py에는 영향 없음)
-st.set_page_config(page_title="AI 정보 선생님", page_icon="🤖")
-st.title("🤖 AI 정보 선생님")
 
-# 비밀 금고(secrets)에서 API 키를 꺼내 접속 준비
+# =========================================================
+# 1. 페이지 기본 설정
+# =========================================================
+# main.py와는 별개로 chat.py 페이지에 적용됩니다.
+st.set_page_config(
+    page_title="AI 정보 선생님",
+    page_icon="🤖"
+)
+
+st.title("🤖 AI 정보 선생님")
+st.caption("말투와 성격을 골라 나만의 AI 선생님과 대화해 보세요.")
+
+
+# =========================================================
+# 2. Gemini API 연결
+# =========================================================
+# API 키는 Streamlit Secrets에서 불러옵니다.
+# 코드 안에는 API 키를 직접 작성하지 않습니다.
 client = OpenAI(
     api_key=st.secrets["GEMINI_API_KEY"],
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
 )
 
-# AI의 성격 (화면에는 띄우지 않고 요청에만 함께 보낸다)
-SYSTEM_PROMPT = (
-    "너는 중고등학생에게 설명하는 친절한 정보 선생님이야. "
-    "어려운 말은 쉬운 말로 바꿔 주고, 반드시 순수 한국어로만 답해"
+
+# =========================================================
+# 3. 말투별 기본 성격 문장
+# =========================================================
+
+PERSONA_PROMPTS = {
+
+    "무서운 선생님": (
+        "너는 중고등학생을 가르치는 엄격한 정보 선생님이야. "
+        "말투는 단호하고 엄격하지만 학생을 모욕하거나 비난하지는 마. "
+        "학생이 문제의 정답을 직접 요구하더라도 바로 정답을 알려 주지 마. "
+        "대신 핵심 개념이나 힌트를 짧게 주고 학생이 먼저 자신의 답을 말하도록 요구해. "
+        "학생이 스스로 답을 제시하면 그 답이 맞는지 확인하고, "
+        "틀렸다면 어느 부분을 다시 생각해야 하는지 알려 줘. "
+        "학생이 답을 맞히면 왜 맞는지도 간단히 설명해 줘. "
+        "어려운 표현은 중고등학생이 이해할 수 있게 설명하고 "
+        "가능한 한 자연스러운 한국어로 답해."
+    ),
+
+    "시크한 전문가": (
+        "너는 중고등학생에게 정보를 설명하는 시크하고 전문적인 선생님이야. "
+        "불필요하게 장황하게 말하지 말고 핵심부터 정확하게 설명해. "
+        "전문적인 내용도 학생이 이해할 수 있는 수준으로 풀어 설명하되 "
+        "중요한 용어나 개념은 정확하게 사용해. "
+        "말투는 차분하고 깔끔하며 자신감 있게 해. "
+        "가능한 한 자연스러운 한국어로 답해."
+    ),
+
+    "친한 친구": (
+        "너는 중고등학생의 공부를 도와주는 친한 친구 같은 정보 선생님이야. "
+        "편하고 친근하게 이야기하되 내용은 정확해야 해. "
+        "어려운 개념은 쉬운 예시를 사용해서 설명하고 "
+        "학생이 헷갈릴 만한 부분을 먼저 짚어 줘. "
+        "너무 과하게 가볍거나 장난스럽게 말하지 말고 "
+        "공부에 도움이 되는 친근한 말투를 사용해. "
+        "가능한 한 자연스러운 한국어로 답해."
+    )
+}
+
+
+# =========================================================
+# 4. 처음 실행할 때 필요한 값 만들기
+# =========================================================
+
+# 현재 선택된 말투
+if "tone" not in st.session_state:
+    st.session_state.tone = "시크한 전문가"
+
+
+# 사용자가 직접 수정할 수 있는 성격 문장
+if "personality_text" not in st.session_state:
+    st.session_state.personality_text = PERSONA_PROMPTS[
+        st.session_state.tone
+    ]
+
+
+# 대화 기록
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+
+# =========================================================
+# 5. 말투를 바꿨을 때 실행되는 함수
+# =========================================================
+
+def change_tone():
+    """
+    말투 선택이 바뀌면
+    해당 말투의 기본 성격 문장을 자동으로 불러옵니다.
+
+    기존 대화 기록은 지우지 않습니다.
+    """
+
+    selected_tone = st.session_state.tone_selector
+
+    st.session_state.tone = selected_tone
+
+    st.session_state.personality_text = PERSONA_PROMPTS[
+        selected_tone
+    ]
+
+
+# =========================================================
+# 6. 대화 기록 초기화 함수
+# =========================================================
+
+def clear_chat():
+    """
+    사용자와 AI가 나눈 대화만 지웁니다.
+
+    현재 선택한 말투와 직접 작성한 성격 문장은
+    그대로 유지합니다.
+    """
+
+    st.session_state.messages = []
+
+
+# =========================================================
+# 7. 사이드바
+# =========================================================
+
+with st.sidebar:
+
+    st.header("⚙️ AI 설정")
+
+    st.markdown("### 🎭 말투 고르기")
+
+
+    # -----------------------------------------------------
+    # 말투 선택
+    # -----------------------------------------------------
+
+    tone_names = list(
+        PERSONA_PROMPTS.keys()
+    )
+
+    current_index = tone_names.index(
+        st.session_state.tone
+    )
+
+    st.selectbox(
+        "AI의 말투",
+        tone_names,
+        index=current_index,
+        key="tone_selector",
+        on_change=change_tone
+    )
+
+
+    st.markdown("---")
+
+
+    # -----------------------------------------------------
+    # 성격 문장 직접 수정
+    # -----------------------------------------------------
+
+    st.markdown("### ✏️ 성격 문장")
+
+    st.caption(
+        "이 문장을 직접 수정하면 다음 답변부터 바로 적용됩니다."
+    )
+
+    personality_text = st.text_area(
+        "AI에게 적용할 성격과 행동 규칙",
+        key="personality_text",
+        height=280
+    )
+
+
+    st.markdown("---")
+
+
+    # -----------------------------------------------------
+    # 대화 초기화 버튼
+    # -----------------------------------------------------
+
+    if st.button(
+        "🗑️ 대화 지우기",
+        use_container_width=True
+    ):
+
+        clear_chat()
+
+        st.rerun()
+
+
+    st.caption(
+        "대화를 지워도 현재 선택한 말투와 성격 설정은 유지됩니다."
+    )
+
+
+# =========================================================
+# 8. 지금까지의 대화를 화면에 다시 표시
+# =========================================================
+
+for msg in st.session_state.messages:
+
+    with st.chat_message(
+        msg["role"]
+    ):
+
+        st.markdown(
+            msg["content"]
+        )
+
+
+# =========================================================
+# 9. 사용자 입력창
+# =========================================================
+
+user_input = st.chat_input(
+    "궁금한 것을 물어보세요!"
 )
 
-# 대화 기록이 없으면 처음 한 번만 만들어 둔다
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-# 지금까지의 대화를 말풍선으로 다시 그리기 (성격 문장은 숨김)
-for msg in st.session_state.messages:
-    if msg["role"] != "system":
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-# 채팅 입력창
-user_input = st.chat_input("궁금한 것을 물어보세요!")
+# =========================================================
+# 10. 사용자가 메시지를 입력했을 때
+# =========================================================
 
 if user_input:
-    # 보낸 말을 기록에 넣고 화면에도 그리기
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
 
-    # AI 답 받아오기 (실패하면 빨간 오류 화면 대신 안내 문구)
+    # -----------------------------------------------------
+    # 사용자 메시지 저장
+    # -----------------------------------------------------
+
+    st.session_state.messages.append(
+        {
+            "role": "user",
+            "content": user_input
+        }
+    )
+
+
+    # 사용자 메시지 화면 출력
+    with st.chat_message("user"):
+
+        st.markdown(
+            user_input
+        )
+
+
+    # -----------------------------------------------------
+    # API에 전달할 대화 내용 만들기
+    # -----------------------------------------------------
+
+    # 현재 사이드바에 적혀 있는 성격 문장을
+    # 항상 가장 최신 SYSTEM PROMPT로 사용합니다.
+    #
+    # 따라서 진행 중인 대화라도 말투를 바꾸면
+    # 다음 답변부터 새로운 말투가 적용됩니다.
+
+    api_messages = [
+        {
+            "role": "system",
+            "content": st.session_state.personality_text
+        }
+    ] + st.session_state.messages
+
+
+    # -----------------------------------------------------
+    # AI 답변 받기
+    # -----------------------------------------------------
+
     with st.chat_message("assistant"):
+
         try:
+
             stream = client.chat.completions.create(
-                model="gemini-3.5-flash-lite",       # 모델 이름은 그대로 유지
-                messages=st.session_state.messages,  # 대화 전체를 함께 보내 기억 유지
-                stream=True,                         # 글자가 실시간으로 흐르게
+
+                # 기존에 사용하던 모델 이름 그대로 유지
+                model="gemini-3.5-flash-lite",
+
+                # 현재 성격 문장 + 지금까지의 대화
+                messages=api_messages,
+
+                # 답변이 한 번에 뜨지 않고
+                # 실시간으로 출력되게 설정
+                stream=True
             )
+
+
+            # 스트리밍되는 답변을 화면에 출력
             answer = st.write_stream(
+
                 chunk.choices[0].delta.content or ""
-                for chunk in stream if chunk.choices
+
+                for chunk in stream
+
+                if chunk.choices
             )
-            # AI 답도 기록에 저장 (다음 질문에 이어서 사용)
-            st.session_state.messages.append({"role": "assistant", "content": answer})
+
+
+            # -------------------------------------------------
+            # AI 답변도 대화 기록에 저장
+            # -------------------------------------------------
+
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": answer
+                }
+            )
+
+
         except Exception:
-            st.error("응답을 받지 못했습니다. 잠시 후 다시 보내 주세요.")
+
+            st.error(
+                "응답을 받지 못했습니다. 잠시 후 다시 보내 주세요."
+            )
